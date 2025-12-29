@@ -36,3 +36,37 @@ vadd_compiled(from_dlpack(a), from_dlpack(b), from_dlpack(c))
 
 c_torch = a + b
 print(torch.allclose(c_torch, c))
+
+
+# import torch
+# import cutlass
+# import cutlass.cute as cute
+# from cutlass.cute.runtime import from_dlpack
+
+# @cute.jit
+# def zdiv_demo(mA: cute.Tensor):
+#     # Partition into per-thread tiles of (1,4)
+#     gA = cute.zipped_divide(mA, (1, 4))
+#     print("Tiled tensor gA:", gA)
+
+#     # Inspect a specific tile (mi, ni)
+#     mi = 0
+#     ni = 0
+#     tile = gA[(None, (mi, ni))]
+#     print("Per-thread tile slice:", tile)
+
+#     # Materialize tile for printing
+#     frag = cute.make_rmem_tensor(tile.layout, tile.element_type)
+#     frag.store(tile.load())
+#     cute.print_tensor(frag)
+
+# A = torch.arange(0, 8*8, dtype=torch.float32).reshape(8, 8)
+# zdiv_demo(from_dlpack(A))
+
+# Tiled tensor gA: tensor<ptr<f32, generic> o ((1,4),(8,2)):((0,1),(8,4))>
+# Per-thread tile slice: tensor<ptr<f32, generic> o ((1,4)):((0,1))>
+# tensor(raw_ptr(0x00007fff82504860: f32, rmem, align<32>) o ((1,4)):((0,1)), data=
+#        [ 0.000000, ],
+#        [ 1.000000, ],
+#        [ 2.000000, ],
+#        [ 3.000000, ])
