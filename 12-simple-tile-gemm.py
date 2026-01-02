@@ -35,11 +35,11 @@ def gemm_kernel(
 
     # C tile
     blkC = gC[None, (bidx, bidy)]
-    thrC = cute.composition(blkC, tvC)[tid, None]
+    thrC = cute.composition(blkC, tvC)[(tidx, tidy), None]
 
     # Predicate for C store
     blkC_c = cC[None, (bidx, bidy)]
-    thrC_c = cute.composition(blkC_c, tvC)[tid, None]
+    thrC_c = cute.composition(blkC_c, tvC)[(tidx, tidy), None]
 
     predC = cute.make_rmem_tensor(thrC.shape, cutlass.Boolean)
     for i in range(cute.size(predC)):
@@ -63,11 +63,11 @@ def gemm_kernel(
         thrA_s = cute.composition(sA, tvA)[tid, None]
         thrB_s = cute.composition(sB, tvB)[tid, None]
 
-        # predication
+        # predication block
         blkA_c = cA[None, (bidx, bidk)]
         blkB_c = cB[None, (bidk, bidy)]
-        thrA_c = cute.composition(blkA_c, tvA)[tid, None]
-        thrB_c = cute.composition(blkB_c, tvB)[tid, None]
+        thrA_c = cute.composition(blkA_c, tvA)[(tidx, tidy), None]
+        thrB_c = cute.composition(blkB_c, tvB)[(tidx, tidy), None]
 
         predA = cute.make_rmem_tensor(thrA_g.shape, cutlass.Boolean)
         predB = cute.make_rmem_tensor(thrB_g.shape, cutlass.Boolean)
@@ -76,13 +76,11 @@ def gemm_kernel(
         for i in range(cute.size(predB)):
             predB[i] = cute.elem_less(thrB_c[i], shapeB)
 
+        # basic copy 특성상  else가 없어서 미리 0으로 채워둠.
+        thrA_s.fill(0.0)
+        thrB_s.fill(0.0) 
 
         # gmem -> smem
-        for i in range(cute.size(thrA_s)):
-            thrA_s[i] = cutlass.Float32(0.0)
-        for i in range(cute.size(thrB_s)):
-            thrB_s[i] = cutlass.Float32(0.0)
-
         cute.basic_copy_if(predA, thrA_g, thrA_s)
         cute.basic_copy_if(predB, thrB_g, thrB_s)
         cute.arch.sync_threads()
@@ -111,8 +109,8 @@ def simple_tile_gemm(A: cute.Tensor, B: cute.Tensor, C: cute.Tensor):
     # Thread layout: 32x32 = 1024 threads
     thr_layout = cute.make_layout((32, 32), stride=(1, 32))
 
-    valA = cute.make_layout((4, 1))
-    valB = cute.make_layout((1, 4))
+    valA = cute.make_layout((4, 1)) # (4,1): (1,0)
+    valB = cute.make_layout((1, 4)) # (1,4): (0,1)
 
     # 핵심: C의 per-thread 4x4는 row-major
     valC = cute.make_layout((4, 4), stride=(4, 1))
@@ -167,3 +165,4 @@ def test_gemm(M, N, K):
 if __name__ == "__main__":
     test_gemm(512, 1024, 512)
     test_gemm(333, 333, 333)
+    test_gemm(8192, 6144, 4096)
