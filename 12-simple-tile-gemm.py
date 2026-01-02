@@ -12,7 +12,12 @@ TM = cutlass.const_expr(4)
 TN = cutlass.const_expr(4)
 
 @cute.kernel
-def gemm_kernel(gA: cute.Tensor, gB: cute.Tensor, gC: cute.Tensor, tvA: cute.Layout, tvB: cute.Layout, tvC: cute.Layout):
+def gemm_kernel(
+    gA: cute.Tensor, gB: cute.Tensor, gC: cute.Tensor, 
+    tvA: cute.Layout, tvB: cute.Layout, tvC: cute.Layout,
+    shapeA: cute.Shape, shapeB: cute.Shape, shapeC: cute.Shape,
+    cA: cute.Tensor, cB: cute.Tensor, cC: cute.Tensor
+):
     
     tidx, tidy, _ = cute.arch.thread_idx()
     bidx, bidy, _ = cute.arch.block_idx()
@@ -32,6 +37,14 @@ def gemm_kernel(gA: cute.Tensor, gB: cute.Tensor, gC: cute.Tensor, tvA: cute.Lay
     blkC = gC[None, (bidx, bidy)]
     thrC = cute.composition(blkC, tvC)[tid, None]
 
+    # Predicate for C store
+    blkC_c = cC[None, (bidx, bidy)]
+    thrC_c = cute.composition(blkC_c, tvC)[tid, None]
+
+    predC = cute.make_rmem_tensor(thrC.shape, cutlass.Boolean)
+    for i in range(cute.size(predC)):
+        predC[i] = cute.elem_less(thrC_c[i], shapeC)
+
     _, num_k_tiles = gA.shape[1]
     m_base = tidx * TM
     n_base = tidy * TN
@@ -50,9 +63,28 @@ def gemm_kernel(gA: cute.Tensor, gB: cute.Tensor, gC: cute.Tensor, tvA: cute.Lay
         thrA_s = cute.composition(sA, tvA)[tid, None]
         thrB_s = cute.composition(sB, tvB)[tid, None]
 
+        # predication
+        blkA_c = cA[None, (bidx, bidk)]
+        blkB_c = cB[None, (bidk, bidy)]
+        thrA_c = cute.composition(blkA_c, tvA)[tid, None]
+        thrB_c = cute.composition(blkB_c, tvB)[tid, None]
+
+        predA = cute.make_rmem_tensor(thrA_g.shape, cutlass.Boolean)
+        predB = cute.make_rmem_tensor(thrB_g.shape, cutlass.Boolean)
+        for i in range(cute.size(predA)):
+            predA[i] = cute.elem_less(thrA_c[i], shapeA)
+        for i in range(cute.size(predB)):
+            predB[i] = cute.elem_less(thrB_c[i], shapeB)
+
+
         # gmem -> smem
-        cute.autovec_copy(thrA_g, thrA_s)
-        cute.autovec_copy(thrB_g, thrB_s)
+        for i in range(cute.size(thrA_s)):
+            thrA_s[i] = cutlass.Float32(0.0)
+        for i in range(cute.size(thrB_s)):
+            thrB_s[i] = cutlass.Float32(0.0)
+
+        cute.basic_copy_if(predA, thrA_g, thrA_s)
+        cute.basic_copy_if(predB, thrB_g, thrB_s)
         cute.arch.sync_threads()
 
         # ---- Clean + unrolled 4x4 outer-product accumulate ----
@@ -72,7 +104,7 @@ def gemm_kernel(gA: cute.Tensor, gB: cute.Tensor, gC: cute.Tensor, tvA: cute.Lay
         cute.arch.sync_threads()
     
     # Store C
-    thrC.store(rC.load())
+    cute.basic_copy_if(predC, rC, thrC)
 
 @cute.jit
 def simple_tile_gemm(A: cute.Tensor, B: cute.Tensor, C: cute.Tensor):
@@ -92,8 +124,17 @@ def simple_tile_gemm(A: cute.Tensor, B: cute.Tensor, C: cute.Tensor):
     gA = cute.zipped_divide(A, tilerA)  # ((TileM,TileK),(RestM,RestK))
     gB = cute.zipped_divide(B, tilerB)  # ((TileK,TileN),(RestK,RestN))
     gC = cute.zipped_divide(C, tilerC)  # ((TileM,TileN),(RestM,RestN))
+    
+    # predication
+    shapeA = A.shape  # (M, K)
+    shapeB = B.shape  # (K, N)
+    shapeC = C.shape  # (M, N)
+    
+    cA = cute.zipped_divide(cute.make_identity_tensor(shapeA), tilerA)
+    cB = cute.zipped_divide(cute.make_identity_tensor(shapeB), tilerB)
+    cC = cute.zipped_divide(cute.make_identity_tensor(shapeC), tilerC)
 
-    gemm_kernel(gA, gB, gC, tvA, tvB, tvC).launch(
+    gemm_kernel(gA, gB, gC, tvA, tvB, tvC, shapeA, shapeB, shapeC, cA, cB, cC).launch(
         grid=gC.shape[1],
         block=thr_layout.shape,
     )
@@ -124,5 +165,5 @@ def test_gemm(M, N, K):
 
 
 if __name__ == "__main__":
-    # divisible by (BM, BN, BK)
     test_gemm(512, 1024, 512)
+    test_gemm(333, 333, 333)
