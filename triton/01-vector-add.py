@@ -3,7 +3,7 @@ import triton.language as tl
 import torch
 import argparse
 
-TILE_SIZE = 1024
+TILE_SIZE = 256
 
 @triton.jit
 def vadd_kernel(a_ptr, b_ptr, c_ptr, n, BLOCK_SIZE: tl.constexpr):

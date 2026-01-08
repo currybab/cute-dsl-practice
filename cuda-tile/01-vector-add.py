@@ -6,7 +6,7 @@ import argparse
 import cuda.tile as ct
 import torch
 
-TILE_SIZE = 1024
+TILE_SIZE = 256
 
 # cuTile kernel for adding two dense vectors. It runs in parallel on the GPU.
 @ct.kernel
