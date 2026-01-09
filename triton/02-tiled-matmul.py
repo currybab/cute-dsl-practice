@@ -1,15 +1,28 @@
-import triton
-import triton.language as tl
 import torch
+import triton.language as tl
+
+import triton
+
 
 @triton.jit
-def matmul_kernel(a_ptr, b_ptr, c_ptr,
-                  M, N, K,
-                  stride_am, stride_ak,
-                  stride_bk, stride_bn,
-                  stride_cm, stride_cn,
-                  BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
-                  GROUP_M: tl.constexpr):
+def matmul_kernel(
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    M,
+    N,
+    K,
+    stride_am,
+    stride_ak,
+    stride_bk,
+    stride_bn,
+    stride_cm,
+    stride_cn,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+):
     pid = tl.program_id(0)
     # group programs along M to improve L2 locality
     grid_m = tl.cdiv(M, BLOCK_M)
@@ -38,11 +51,14 @@ def matmul_kernel(a_ptr, b_ptr, c_ptr,
             other=0.0,
         )
         acc += tl.dot(a, b, input_precision="ieee")
-    tl.store(c_ptr + offs_m * stride_cm + offs_n * stride_cn, acc,
-             mask=(offs_m < M) & (offs_n < N))
+    tl.store(
+        c_ptr + offs_m * stride_cm + offs_n * stride_cn,
+        acc,
+        mask=(offs_m < M) & (offs_n < N),
+    )
 
 
-def simple_matmul(A: tl.tensor, B: tl.tensor, C: tl.tensor):
+def simple_matmul(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor):
     M, K = A.shape
     N = B.shape[1]
     BLOCK_M = 32
@@ -71,20 +87,21 @@ def simple_matmul(A: tl.tensor, B: tl.tensor, C: tl.tensor):
         GROUP_M=GROUP_M,
     )
 
-def test_conv1d(M, N, K):
+
+def test_matmul(M, N, K):
     print(f"Testing M={M}, N={N}, K={K}")
-    
+
     a_torch = torch.randn(M, K, dtype=torch.float32, device="cuda")
     b_torch = torch.randn(K, N, dtype=torch.float32, device="cuda")
     c_torch = torch.zeros(M, N, dtype=torch.float32, device="cuda")
-    
+
     # Compile and run
     simple_matmul(a_torch, b_torch, c_torch)
     torch.cuda.synchronize()
 
     # Verification
-    expected = a_torch @ b_torch 
-    
+    expected = a_torch @ b_torch
+
     torch.cuda.synchronize()
     is_correct = torch.allclose(c_torch, expected, atol=1e-4)
     print(f"  Verification: {'Success' if is_correct else 'Failure'}")
@@ -94,4 +111,4 @@ def test_conv1d(M, N, K):
 
 
 if __name__ == "__main__":
-    test_conv1d(1024, 1024, 1024)
+    test_matmul(1024, 1024, 1024)

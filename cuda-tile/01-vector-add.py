@@ -8,6 +8,7 @@ import torch
 
 TILE_SIZE = 256
 
+
 # cuTile kernel for adding two dense vectors. It runs in parallel on the GPU.
 @ct.kernel
 def vector_add_kernel(a, b, result, tile_size: ct.Constant[int]):
@@ -18,10 +19,16 @@ def vector_add_kernel(a, b, result, tile_size: ct.Constant[int]):
     ct.store(result, index=(block_id,), tile=result_tile)
 
 
-def launch_vector_add(a, b, result, tile_size=TILE_SIZE, stream=None):
+def launch_vector_add(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    result: torch.Tensor,
+    tile_size=TILE_SIZE,
+    stream=None,
+):
     if stream is None:
         stream = torch.cuda.current_stream()
-    grid = (ct.cdiv(a.shape[0], tile_size), 1, 1)
+    grid = (int(ct.cdiv(a.shape[0], tile_size)), 1, 1)
     ct.launch(stream, grid, vector_add_kernel, (a, b, result, tile_size))
 
 
@@ -54,7 +61,9 @@ def benchmark_vector_add(
     iters=100,
     warmup=1,
 ):
-    print(f"Benchmarking: N={vector_size}, tile_size={tile_size}, dtype={dtype}, iters={iters}")
+    print(
+        f"Benchmarking: N={vector_size}, tile_size={tile_size}, dtype={dtype}, iters={iters}"
+    )
 
     a = torch.randn(vector_size, dtype=dtype, device="cuda")
     b = torch.randn(vector_size, dtype=dtype, device="cuda")
@@ -119,7 +128,12 @@ if __name__ == "__main__":
     parser.add_argument("--tile-size", type=int, default=TILE_SIZE)
     parser.add_argument("--iters", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=1)
-    parser.add_argument("--dtype", type=str, default="float32", choices=["float16", "float32", "float64"])
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="float32",
+        choices=["float16", "float32", "float64"],
+    )
     args = parser.parse_args()
 
     dtype = _dtype_from_str(args.dtype)
