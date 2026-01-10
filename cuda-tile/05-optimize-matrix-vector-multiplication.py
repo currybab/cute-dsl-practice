@@ -2,16 +2,15 @@ import cuda.tile as ct
 import cupy
 
 @ct.kernel
-def mat_vec_mul_kernel(A, B, C, M: int, K: int, M_TILE: ct.Constant[int]):
+def mat_vec_mul_kernel(A, B, C, M: int, K: int, M_TILE: ct.Constant[int], K_TILE: ct.Constant[int], NUM_K_TILES: ct.Constant[int]):
     bidx = ct.bid(0)
-    row_indices = bidx * M_TILE + ct.arange(M_TILE, dtype=ct.int32)
 
     acc = ct.zeros((M_TILE,), dtype=ct.float32)
 
-    for k in range(K):
-        a_col = ct.gather(A, (row_indices, k), padding_value=0.0) 
-        b_val = ct.gather(B, k)
-        acc = acc + a_col * b_val
+    for k_block in range(NUM_K_TILES):
+        a_tile = ct.load(A, index=(bidx, k_block), shape=(M_TILE, K_TILE), padding_mode=ct.PaddingMode.ZERO)
+        b_tile = ct.load(B, index=(k_block,), shape=(K_TILE,), padding_mode=ct.PaddingMode.ZERO)
+        acc = acc + ct.sum(a_tile * b_tile, axis=1)
 
     ct.store(C, index=(bidx,), tile=acc)
     
@@ -24,9 +23,11 @@ def mat_vec_mul_kernel(A, B, C, M: int, K: int, M_TILE: ct.Constant[int]):
 # You can use cupy.cuda.get_current_stream() to get the current stream to launch cuTile kernels.
 # Note: input_a, input_b, output_c are all float32 device tensors
 def solution(input_a, input_b, output_c, m: int, k: int):
-    M_TILE = 256
+    M_TILE = 64
+    K_TILE = 512
+    NUM_K_TILES = ct.cdiv(k, K_TILE)
     grid = (ct.cdiv(m, M_TILE),)
-    ct.launch(cupy.cuda.get_current_stream(), grid, mat_vec_mul_kernel, (input_a, input_b, output_c, m, k, M_TILE))
+    ct.launch(cupy.cuda.get_current_stream(), grid, mat_vec_mul_kernel, (input_a, input_b, output_c, m, k, M_TILE, K_TILE, NUM_K_TILES))
 
 
 if __name__ == "__main__":
